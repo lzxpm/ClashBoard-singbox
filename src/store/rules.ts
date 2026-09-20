@@ -5,8 +5,12 @@ import { fetchServerApi } from '@/store/auth'
 import type { Rule, RuleProvider } from '@/types'
 import { useStorage } from '@vueuse/core'
 import { computed, ref } from 'vue'
+// 增加导入 normalizeSingboxRules 和 normalizeSingboxProviders
+import { normalizeSingboxProviders, normalizeSingboxRules } from '@/api/adapters'
 
 export type RuleRefreshPhase = 'idle' | 'provider' | 'cache'
+
+export const isSingboxKernel = ref(false)
 
 export type RuleRefreshState = {
   runId: number
@@ -54,48 +58,6 @@ export const ruleProviderOrderList = ref<string[]>([])
 export const ruleCacheRefreshCount = ref(0)
 export const isRuleCacheUpdating = ref(false)
 export const ruleRefreshState = ref<RuleRefreshState>(createDefaultRuleRefreshState())
-export const isRuleLookupLoading = ref(false)
-export const ruleLookupError = ref('')
-export const ruleLookupResults = ref<
-  {
-    providerName: string
-    behavior: string
-    format: string
-    url: string
-    totalRules: number
-    matches: {
-      line: number
-      value: string
-      mode: string
-      raw: string
-    }[]
-    linkedRules: Rule[]
-  }[]
->([])
-export const ruleLookupDirectRules = ref<Rule[]>([])
-export const ruleLookupUnsupported = ref<
-  {
-    name: string
-    kind: string
-    behavior: string
-    format: string
-    url: string
-    status: string
-  }[]
->([])
-export const ruleLookupLiveErrors = ref<
-  {
-    name: string
-    url: string
-    message: string
-  }[]
->([])
-let latestRuleLookupRequestId = 0
-export const isRuleLookupQuery = computed(() => {
-  const value = rulesFilter.value.trim()
-
-  return value !== '' && !value.includes(' ') && !value.includes('|')
-})
 
 export const renderRules = computed(() => {
   const rulesFilterValue = rulesFilter.value.split(' ').map((f) => f.toLowerCase().trim())
@@ -183,7 +145,10 @@ export const visibleRuleProviderList = computed(() => {
       const rightReferencedOrder = referencedRuleProviderOrderIndexMap.value.get(right.name)
 
       if (leftReferencedOrder !== undefined || rightReferencedOrder !== undefined) {
-        return (leftReferencedOrder ?? Number.MAX_SAFE_INTEGER) - (rightReferencedOrder ?? Number.MAX_SAFE_INTEGER)
+        return (
+          (leftReferencedOrder ?? Number.MAX_SAFE_INTEGER) -
+          (rightReferencedOrder ?? Number.MAX_SAFE_INTEGER)
+        )
       }
 
       const leftOrder = ruleProviderOrderIndexMap.value.get(left.name)
@@ -197,28 +162,13 @@ export const visibleRuleProviderList = computed(() => {
     })
 })
 
-const isRuleEnabled = (rule: Rule) => {
+export const isRuleEnabled = (rule: Rule) => {
   if (rule.extra) {
     return !rule.extra.disabled
   }
 
   return !rule.disabled
 }
-
-export const ruleLookupFallbackRule = computed(() => {
-  const enabledRules = rules.value.filter(isRuleEnabled)
-
-  for (let index = enabledRules.length - 1; index >= 0; index--) {
-    const rule = enabledRules[index]
-    const normalizedType = rule.type.toLowerCase()
-
-    if (normalizedType === 'match' || normalizedType === 'final') {
-      return rule
-    }
-  }
-
-  return null
-})
 
 export const isRuleRefreshRunning = computed(() => {
   return ruleRefreshState.value.isRefreshing
@@ -252,21 +202,41 @@ export const fetchRules = async () => {
   const { data: ruleData } = await fetchRulesAPI()
   const { data: providerData } = await fetchRuleProvidersAPI()
 
-  rules.value = ruleData.rules.map((rule) => {
-    const proxy = rule.proxy
-    const proxyName = proxy.startsWith('route(') ? proxy.substring(6, proxy.length - 1) : proxy
+  const rawRules = ruleData?.rules || []
 
-    return {
-      ...rule,
-      proxy: proxyName,
-    }
-  })
-  ruleProviderList.value = Object.values(providerData.providers)
+  // 1. 判断是否为 sing-box 内核 (sing-box 规则包含 outbound 或 rule_set 等特有属性)
+  isSingboxKernel.value = rawRules.some(
+    (r: Record<string, unknown>) => 'outbound' in r || 'rule_set' in r,
+  )
+
+  // 2. 根据内核类型分别解析
+  if (isSingboxKernel.value) {
+    // sing-box 走适配器逻辑
+    rules.value = normalizeSingboxRules(rawRules)
+    ruleProviderList.value = Object.values(normalizeSingboxProviders(providerData?.providers || {}))
+  } else {
+    // 原有 Clash / Nikki 的标准解析逻辑保持不变
+    rules.value = rawRules.map((rule) => {
+      const proxy = rule.proxy || ''
+      const proxyName = proxy.startsWith('route(') ? proxy.substring(6, proxy.length - 1) : proxy
+
+      return {
+        ...rule,
+        proxy: proxyName,
+      }
+    })
+    ruleProviderList.value = Object.values(providerData?.providers || {})
+  }
 }
 
 export const fetchRuleProviders = async () => {
   const { data: providerData } = await fetchRuleProvidersAPI()
-  ruleProviderList.value = Object.values(providerData.providers)
+
+  if (isSingboxKernel.value) {
+    ruleProviderList.value = Object.values(normalizeSingboxProviders(providerData?.providers || {}))
+  } else {
+    ruleProviderList.value = Object.values(providerData?.providers || {})
+  }
 }
 
 export const updateRuleProviderCache = async () => {
@@ -328,7 +298,9 @@ export const startBackgroundRuleRefresh = async (
 
   if (!response.ok) {
     const errorBody = (await response.json().catch(() => null)) as { message?: string } | null
-    throw new Error(errorBody?.message || `Failed to start background rule refresh: ${response.status}`)
+    throw new Error(
+      errorBody?.message || `Failed to start background rule refresh: ${response.status}`,
+    )
   }
 
   return (await response.json()) as {
@@ -360,7 +332,9 @@ export const cancelBackgroundRuleRefresh = async () => {
 
   if (!response.ok) {
     const errorBody = (await response.json().catch(() => null)) as { message?: string } | null
-    throw new Error(errorBody?.message || `Failed to cancel background rule refresh: ${response.status}`)
+    throw new Error(
+      errorBody?.message || `Failed to cancel background rule refresh: ${response.status}`,
+    )
   }
 
   return (await response.json()) as {
@@ -453,140 +427,3 @@ export const applyRuleProviderCacheStats = (stats: {
   isRuleCacheUpdating.value = false
 }
 
-export const searchRuleByQuery = async () => {
-  const requestId = ++latestRuleLookupRequestId
-
-  if (!isRuleLookupQuery.value) {
-    ruleLookupResults.value = []
-    ruleLookupDirectRules.value = []
-    ruleLookupUnsupported.value = []
-    ruleLookupLiveErrors.value = []
-    ruleLookupError.value = ''
-    isRuleLookupLoading.value = false
-    return
-  }
-
-  const query = rulesFilter.value.trim()
-
-  if (!query) {
-    ruleLookupResults.value = []
-    ruleLookupDirectRules.value = []
-    ruleLookupUnsupported.value = []
-    ruleLookupLiveErrors.value = []
-    ruleLookupError.value = ''
-    isRuleLookupLoading.value = false
-    return
-  }
-
-  isRuleLookupLoading.value = true
-  ruleLookupError.value = ''
-
-  try {
-    const response = await fetchServerApi('/api/rule-provider-search', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        query,
-        rules: rules.value.map((rule) => ({
-          type: rule.type,
-          payload: rule.payload,
-          proxy: rule.proxy,
-          index: rule.index,
-          disabled: rule.disabled,
-          extra: rule.extra
-            ? {
-                disabled: rule.extra.disabled,
-              }
-            : undefined,
-        })),
-      }),
-    })
-
-    if (!response.ok) {
-      const errorBody = (await response.json().catch(() => null)) as { message?: string } | null
-      throw new Error(errorBody?.message || `Failed to search rule cache: ${response.status}`)
-    }
-
-    const data = (await response.json()) as {
-      matches: {
-        name: string
-        behavior: string
-        format: string
-        url: string
-        totalRules: number
-        matches: {
-          line: number
-          value: string
-          mode: string
-          raw: string
-        }[]
-      }[]
-      directRuleIndexes: number[]
-      unsupported: {
-        name: string
-        kind: string
-        behavior: string
-        format: string
-        url: string
-        status: string
-      }[]
-      errors: {
-        name: string
-        url: string
-        message: string
-      }[]
-    }
-
-    if (requestId !== latestRuleLookupRequestId || rulesFilter.value.trim() !== query) {
-      return
-    }
-
-    ruleLookupResults.value = data.matches
-      .map((item) => ({
-        providerName: item.name,
-        behavior: item.behavior,
-        format: item.format,
-        url: item.url,
-        totalRules: item.totalRules,
-        matches: item.matches,
-        linkedRules: rules.value.filter(
-          (rule) => rule.type === 'RuleSet' && rule.payload === item.name,
-        ),
-      }))
-      .filter((item) => item.linkedRules.length > 0)
-      .sort((prev, next) => {
-        const prevIndex = Math.min(...prev.linkedRules.map((rule) => rule.index))
-        const nextIndex = Math.min(...next.linkedRules.map((rule) => rule.index))
-
-        const safePrevIndex = Number.isFinite(prevIndex) ? prevIndex : Number.MAX_SAFE_INTEGER
-        const safeNextIndex = Number.isFinite(nextIndex) ? nextIndex : Number.MAX_SAFE_INTEGER
-
-        if (safePrevIndex !== safeNextIndex) {
-          return safePrevIndex - safeNextIndex
-        }
-
-        return prev.providerName.localeCompare(next.providerName)
-      })
-    ruleLookupDirectRules.value = rules.value.filter((rule) =>
-      data.directRuleIndexes.includes(rule.index),
-    )
-    ruleLookupUnsupported.value = data.unsupported
-    ruleLookupLiveErrors.value = data.errors
-  } catch (error) {
-    if (requestId !== latestRuleLookupRequestId || rulesFilter.value.trim() !== query) {
-      return
-    }
-
-    ruleLookupResults.value = []
-    ruleLookupDirectRules.value = []
-    ruleLookupUnsupported.value = []
-    ruleLookupLiveErrors.value = []
-    ruleLookupError.value = error instanceof Error ? error.message : String(error)
-  } finally {
-    if (requestId === latestRuleLookupRequestId) {
-      isRuleLookupLoading.value = false
-    }
-  }
-}

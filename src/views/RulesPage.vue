@@ -7,106 +7,72 @@
         :style="padding"
       >
         <div class="app-page-gap app-page-padding flex flex-col">
-          <template
-            v-if="
-              (rulesTabShow === RULE_TAB_TYPE.RULES || rulesTabShow === RULE_TAB_TYPE.PROVIDER) &&
-              isRuleLookupQuery
-            "
+          <RoutePreviewCard
+            v-if="routePreviewResult"
+            :result="routePreviewResult"
+          />
+          <div
+            v-else-if="routePreviewLoading"
+            class="card app-card-padding text-sm"
           >
-            <div
-              v-if="isRuleLookupLoading"
-              class="card app-card-padding text-sm"
-            >
-              {{ t('ruleLookupLoading') }}
-            </div>
-            <div
-              v-else-if="ruleLookupError"
-              class="card app-card-padding text-sm"
-            >
-              {{ ruleLookupError }}
-            </div>
-            <template v-else>
-              <div
-                v-if="ruleLookupResults.length === 0 && ruleLookupDirectRules.length === 0"
-                class="card app-card-padding text-sm"
-              >
-                <div>{{ t('ruleLookupEmpty') }}</div>
-                <div
-                  v-if="ruleLookupUnsupported.length > 0"
-                  class="text-base-content/70 mt-1 text-xs"
-                >
-                  {{ t('ruleLookupUnsupportedHint', { count: ruleLookupUnsupported.length }) }}
-                </div>
-              </div>
-              <div
-                v-else
-                class="card app-card-padding text-sm"
-              >
-                {{ t('ruleLookupTopMatches') }}
-              </div>
-              <RuleFallbackCard
-                v-if="
-                  ruleLookupResults.length === 0 &&
-                  ruleLookupDirectRules.length === 0 &&
-                  ruleLookupFallbackRule
-                "
-                :rule="ruleLookupFallbackRule"
-              />
-              <RuleCard
-                v-for="rule in ruleLookupDirectRules"
-                :key="`lookup-direct-${rule.index}-${rule.type}-${rule.payload}`"
-                :rule="rule"
-                :index="rule.index + 1"
-              />
-              <RuleLookupCard
-                v-for="(result, index) in ruleLookupResults"
-                :key="result.providerName"
-                :result="result"
-                :index="index + 1"
-              />
-              <div
-                v-if="ruleLookupUnsupported.length > 0"
-                class="card app-card-padding text-xs"
-              >
-                {{ t('ruleLookupUnsupportedProviders') }}
-                {{ ruleLookupUnsupported.map((item) => item.name).join('、') }}
-              </div>
-            </template>
-          </template>
-          <template v-else-if="rulesTabShow === RULE_TAB_TYPE.PROVIDER">
-            <RuleProvider
-              v-for="(ruleProvider, index) in renderRulesProvider"
-              :key="ruleProvider.name"
-              :ruleProvider="ruleProvider"
-              :index="index + 1"
-            />
-          </template>
-          <template v-else>
-            <RuleCard
-              v-for="rule in renderRules"
-              :key="`${rule.type}-${rule.payload}-${rule.proxy}`"
-              :rule="rule"
-              :index="rules.indexOf(rule) + 1"
-            />
-          </template>
+            <span class="loading loading-spinner loading-xs mr-2 align-middle" />
+            {{ t('routePreviewLoading') }}
+          </div>
+          <div
+            v-if="routePenetrationError"
+            class="alert alert-error app-card-padding text-sm"
+          >
+            <ExclamationTriangleIcon class="h-4 w-4 shrink-0" />
+            <span class="min-w-0 break-all">{{ routePenetrationError }}</span>
+          </div>
+          <RoutePenetrationCard
+            v-if="routePenetrationResult"
+            :result="routePenetrationResult"
+            @retest="retestRoutePenetration"
+          />
+          <RuleCard
+            v-for="rule in renderRules"
+            :key="`${rule.type}-${rule.payload}-${rule.proxy}`"
+            :rule="rule"
+            :index="rules.indexOf(rule) + 1"
+          />
         </div>
       </div>
     </template>
-    <VirtualScroller
-      v-else
-      class="min-h-0 flex-1"
-      :style="virtualScrollerStyle"
-      :data="renderRules"
-      :size="84"
-    >
-      <template #default="{ item: rule }: { item: Rule }">
-        <RuleCard
-          :key="`${rule.type}-${rule.payload}-${rule.proxy}`"
-          :rule="rule"
-          :index="rules.indexOf(rule) + 1"
+    <template v-else>
+      <div class="app-page-margin shrink-0">
+        <RoutePreviewCard
+          v-if="routePreviewResult"
+          :result="routePreviewResult"
         />
-      </template>
-    </VirtualScroller>
+        <div
+          v-if="routePenetrationError"
+          class="alert alert-error app-card-padding text-sm"
+        >
+          <ExclamationTriangleIcon class="h-4 w-4 shrink-0" />
+          <span class="min-w-0 break-all">{{ routePenetrationError }}</span>
+        </div>
+        <RoutePenetrationCard
+          v-if="routePenetrationResult"
+          :result="routePenetrationResult"
+          @retest="retestRoutePenetration"
+        />
+      </div>
+      <VirtualScroller
+        class="min-h-0 flex-1"
+        :style="virtualScrollerStyle"
+        :data="renderRules"
+        :size="84"
+      >
+        <template #default="{ item: rule }: { item: Rule }">
+          <RuleCard
+            :key="`${rule.type}-${rule.payload}-${rule.proxy}`"
+            :rule="rule"
+            :index="rules.indexOf(rule) + 1"
+          />
+        </template>
+      </VirtualScroller>
+    </template>
     <ProxyGroupRulePenetrationDialog />
   </div>
 </template>
@@ -114,188 +80,100 @@
 <script setup lang="ts">
 import VirtualScroller from '@/components/common/VirtualScroller.vue'
 import ProxyGroupRulePenetrationDialog from '@/components/proxies/ProxyGroupRulePenetrationDialog.vue'
+import RoutePenetrationCard from '@/components/rules/RoutePenetrationCard.vue'
+import RoutePreviewCard from '@/components/rules/RoutePreviewCard.vue'
 import RuleCard from '@/components/rules/RuleCard.vue'
-import RuleFallbackCard from '@/components/rules/RuleFallbackCard.vue'
-import RuleLookupCard from '@/components/rules/RuleLookupCard.vue'
-import RuleProvider from '@/components/rules/RuleProvider.vue'
 import RulesCtrl from '@/components/sidebar/RulesCtrl.tsx'
 import { usePaddingForViews } from '@/composables/paddingViews'
-import { RULE_TAB_TYPE } from '@/constant'
-import { showNotification } from '@/helper/notification'
 import { fetchProxies } from '@/store/proxies'
+import {
+  bootstrapDnsConfig,
+  resetRoutePenetration,
+  routePenetrationError,
+  routePenetrationQueriedTarget,
+  routePenetrationResult,
+  routePreviewLoading,
+  routePreviewResult,
+  runRoutePenetration,
+  runRoutePenetrationPreview,
+} from '@/store/routePenetration'
 import {
   applyRuleProviderCacheStats,
   fetchRuleProviderCacheStats,
   fetchRules,
-  hasReferencedRuleProviders,
   isRuleCacheUpdating,
-  isRuleLookupLoading,
-  isRuleLookupQuery,
-  isRuleRefreshRunning,
   renderRules,
-  renderRulesProvider,
   ruleCacheRefreshCount,
   ruleCacheTotalRules,
-  ruleLookupDirectRules,
-  ruleLookupError,
-  ruleLookupFallbackRule,
-  ruleLookupResults,
-  ruleLookupUnsupported,
   ruleProviderList,
-  ruleRefreshState,
   rules,
   rulesFilter,
-  rulesTabShow,
-  searchRuleByQuery,
   updateRuleProviderCache,
 } from '@/store/rules'
 import type { Rule } from '@/types'
+import { ExclamationTriangleIcon } from '@heroicons/vue/24/outline'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-const autoRuleCacheBootstrapAttempted = ref(false)
-const observedRefreshRunId = ref(0)
-const isRulesTabHydrated = ref(false)
 const { t } = useI18n()
 
-const syncRuleCacheStats = async () => {
+const retestRoutePenetration = () => {
+  const target = routePenetrationQueriedTarget.value || rulesFilter.value.trim()
+
+  if (target) {
+    void runRoutePenetration(target)
+  }
+}
+
+const autoRuleCacheBootstrapAttempted = ref(false)
+
+void Promise.allSettled([fetchRules(), fetchProxies()]).then(async () => {
+  // 真实路由检测的预览依赖规则缓存,首次进入时自动补种
   try {
-    const stats = await fetchRuleProviderCacheStats()
-    applyRuleProviderCacheStats(stats)
+    if (
+      !autoRuleCacheBootstrapAttempted.value &&
+      ruleProviderList.value.length > 0 &&
+      ruleCacheTotalRules.value === 0 &&
+      !isRuleCacheUpdating.value
+    ) {
+      autoRuleCacheBootstrapAttempted.value = true
+      isRuleCacheUpdating.value = true
+      ruleCacheRefreshCount.value = 0
+
+      const result = await updateRuleProviderCache()
+      applyRuleProviderCacheStats(result)
+    } else {
+      applyRuleProviderCacheStats(await fetchRuleProviderCacheStats())
+    }
   } catch {
     isRuleCacheUpdating.value = false
   }
-}
 
-const ensureRuleCacheBootstrap = async () => {
-  if (autoRuleCacheBootstrapAttempted.value) {
-    return
-  }
+  // DNS 预览依赖内核运行配置的 dns 段缓存,首次进入时自动读取(失败静默)
+  void bootstrapDnsConfig()
+})
 
-  if (
-    ruleProviderList.value.length === 0 ||
-    ruleCacheTotalRules.value > 0 ||
-    isRuleCacheUpdating.value
-  ) {
-    return
-  }
+let previewTimer: ReturnType<typeof setTimeout> | undefined
 
-  autoRuleCacheBootstrapAttempted.value = true
-  isRuleCacheUpdating.value = true
-  ruleCacheRefreshCount.value = 0
+watch(rulesFilter, (value) => {
+  // 搜索只负责过滤列表;检测类结果一律清除,规则路由预览 800ms 防抖后自动查询
+  if (previewTimer) clearTimeout(previewTimer)
+  resetRoutePenetration()
 
-  try {
-    const result = await updateRuleProviderCache()
+  const trimmed = value.trim()
 
-    if (result.cancelled) {
-      autoRuleCacheBootstrapAttempted.value = false
-      return
-    }
+  if (!trimmed) return
 
-    ruleCacheRefreshCount.value = result.progressRules
-    applyRuleProviderCacheStats(result)
-  } catch (error) {
-    autoRuleCacheBootstrapAttempted.value = false
-    showNotification({
-      key: 'ruleCacheAutoInitFailed',
-      content: error instanceof Error ? error.message : String(error),
-      type: 'alert-error',
-      timeout: 3000,
-    })
-  } finally {
-    await syncRuleCacheStats()
-  }
-}
-
-const initializeRulesPage = async () => {
-  await Promise.allSettled([fetchRules(), fetchProxies()])
-  isRulesTabHydrated.value = true
-  await syncRuleCacheStats()
-  await ensureRuleCacheBootstrap()
-}
-
-void initializeRulesPage()
-
-const statsPollingTimer = setInterval(() => {
-  if (
-    rulesTabShow.value === RULE_TAB_TYPE.PROVIDER ||
-    isRuleCacheUpdating.value ||
-    isRuleRefreshRunning.value
-  ) {
-    syncRuleCacheStats()
-  }
-}, 500)
+  previewTimer = setTimeout(() => {
+    void runRoutePenetrationPreview(trimmed)
+  }, 800)
+})
 
 onBeforeUnmount(() => {
-  clearInterval(statsPollingTimer)
+  if (previewTimer) clearTimeout(previewTimer)
+  // 离开规则页即清掉检测结果,避免下次进入时残留
+  resetRoutePenetration()
 })
-
-watch(
-  rulesFilter,
-  () => {
-    searchRuleByQuery()
-  },
-  { immediate: true },
-)
-
-watch(rulesTabShow, () => {
-  fetchProxies()
-})
-
-watch(
-  () => ({
-    hasReferencedProviders: hasReferencedRuleProviders.value,
-    isHydrated: isRulesTabHydrated.value,
-    currentTab: rulesTabShow.value,
-  }),
-  ({ hasReferencedProviders, isHydrated, currentTab }) => {
-    if (!isHydrated) {
-      return
-    }
-
-    if (!hasReferencedProviders && currentTab === RULE_TAB_TYPE.PROVIDER) {
-      rulesTabShow.value = RULE_TAB_TYPE.RULES
-    }
-  },
-  {
-    immediate: true,
-  },
-)
-
-watch(
-  () => ruleRefreshState.value.isRefreshing,
-  async (isRefreshing, wasRefreshing) => {
-    if (isRefreshing) {
-      observedRefreshRunId.value = ruleRefreshState.value.runId
-      return
-    }
-
-    if (!wasRefreshing || observedRefreshRunId.value !== ruleRefreshState.value.runId) {
-      return
-    }
-
-    if (ruleRefreshState.value.cancelled) {
-      return
-    }
-
-    await fetchRules()
-
-    const hasError = ruleRefreshState.value.errors > 0
-    const errorMessage = ruleRefreshState.value.lastError.trim()
-
-    showNotification({
-      key: 'ruleRefreshCompletedTip',
-      content: hasError && errorMessage ? errorMessage : 'ruleRefreshCompletedTip',
-      params: hasError
-        ? {}
-        : {
-            number: `${ruleRefreshState.value.totalRules}`,
-          },
-      type: hasError ? 'alert-warning' : 'alert-success',
-      timeout: hasError ? 5000 : 2500,
-    })
-  },
-)
 
 const { padding, paddingTop } = usePaddingForViews({
   offsetTop: 0,
@@ -306,10 +184,6 @@ const virtualScrollerStyle = computed(() => ({
 }))
 
 const isVirtualScroller = computed(() => {
-  return (
-    rulesTabShow.value === RULE_TAB_TYPE.RULES &&
-    !isRuleLookupQuery.value &&
-    renderRules.value.length > 200
-  )
+  return renderRules.value.length > 200
 })
 </script>
