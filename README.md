@@ -1,6 +1,7 @@
 # ClashBoard-singbox
 
 ClashBoard-singbox 是一个基于 `Vue 3 + TypeScript + Vite` 的 Clash 面板，面向 `Clash API`、`Mihomo`、`OpenClash`、`Nikki` 和 `sing-box` 的运行态管理、观测与排错。
+在原有项目基础上新增了singbox适配，新增规则检测与真实路由检测
 
 > **声明**：本项目基于 [AnGe-ClashBoard](https://github.com/liandu2024/AnGe-ClashBoard) 与开源项目 [zashboard](https://github.com/Zephyruso/zashboard) 进行二次开发，在此感谢两位上游作者的付出。两个上游项目均使用 `MIT License`，本项目沿用该许可证并保留原许可证声明，相关授权信息见下文「授权」与仓库中的 [LICENSE](LICENSE) 文件。
 
